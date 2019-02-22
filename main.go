@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/ioutil"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -13,12 +14,17 @@ import (
 	"unicode"
 
 	"github.com/hashicorp/vault/api"
+	"github.com/mitchellh/go-homedir"
 	"github.com/urfave/cli"
 	"golang.org/x/crypto/ssh/terminal"
 )
 
 func main() {
 	app := cli.NewApp()
+	app.Name = "vault-exec"
+	app.Usage = "fetch secrets from vault and inject them as environment variables"
+	app.UsageText = "vault-exec [options] cmd-to-execute"
+	app.Version = "0.1"
 	app.Flags = []cli.Flag{
 		cli.StringFlag{
 			Name:   "address,vault-addr",
@@ -34,7 +40,7 @@ func main() {
 		},
 		cli.StringSliceFlag{
 			Name:  "secret",
-			Usage: "path of secret to be read from Vault",
+			Usage: "path of secret to be read from Vault (multiple times)",
 		},
 		cli.StringFlag{
 			Name:   "method",
@@ -78,7 +84,6 @@ func main() {
 			EnvVar: "UPCASE",
 		},
 		cli.BoolFlag{
-			// TODO
 			Name:   "prefix",
 			Usage:  "prefix the environment variable keys with the name of secret",
 			EnvVar: "PREFIX",
@@ -92,6 +97,7 @@ func main() {
 	app.Action = func(c *cli.Context) error {
 		secrets := c.GlobalStringSlice("secret")
 		authType := strings.ToLower(c.GlobalString("method"))
+		doPrefix := c.GlobalBool("prefix")
 		path := strings.TrimSpace(c.GlobalString("path"))
 		if path == "" {
 			path = authType
@@ -110,21 +116,30 @@ func main() {
 		case "token":
 			tok := strings.TrimSpace(c.GlobalString("token"))
 			if tok == "" {
-				t, err := input("enter token: ", true)
-				if err != nil {
-					return cli.NewExitError(fmt.Sprintf("error reading token: %s", err), 1)
+				tokenPath, err := homedir.Expand("~/.vault-token")
+				if err == nil {
+					infos, err := os.Stat(tokenPath)
+					if err == nil && infos.Mode().IsRegular() {
+						content, err := ioutil.ReadFile(tokenPath)
+						if err == nil {
+							tok = string(content)
+						}
+					}
 				}
-				if t == "" {
-					return cli.NewExitError("empty token", 1)
+				if tok == "" {
+					t, err := input("enter token: ", true)
+					if err != nil {
+						return cli.NewExitError(fmt.Sprintf("error reading token: %s", err), 1)
+					}
+					if t == "" {
+						return cli.NewExitError("empty token", 1)
+					}
+					tok = t
 				}
-				tok = t
 			}
 			client.SetToken(tok)
 
-		case "ldap":
-			// TODO
-
-		case "userpass":
+		case "userpass", "ldap":
 			username := strings.TrimSpace(c.GlobalString("username"))
 			password := strings.TrimSpace(c.GlobalString("password"))
 			if username == "" {
@@ -253,9 +268,12 @@ func main() {
 			}
 		}
 		upcase := c.GlobalBool("upcase")
-		cmd := exec.CommandContext(ctx, args[0], args[1:]...)
-		for _, sValues := range results {
+		cmd := exec.Command(args[0], args[1:]...)
+		for secretKey, sValues := range results {
 			for k, v := range sValues {
+				if doPrefix {
+					k = secretKey + "_" + k
+				}
 				//fmt.Printf("%s => %s = %s\n", sKey, k, v)
 				k = sanitize(k)
 				if upcase {
@@ -268,10 +286,18 @@ func main() {
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		cmd.Stdin = os.Stdin
+		cmd.SysProcAttr = &syscall.SysProcAttr{
+			Setpgid: true,
+			Pgid:    0,
+		}
 		err = cmd.Start()
 		if err != nil {
 			return cli.NewExitError(fmt.Sprintf("failed to start command: %s", err), 1)
 		}
+		go func() {
+			<-ctx.Done()
+			cmd.Process.Signal(syscall.SIGTERM)
+		}()
 		err = cmd.Wait()
 		if err != nil {
 			if e, ok := err.(*exec.ExitError); ok {
@@ -287,8 +313,7 @@ func main() {
 }
 
 func sanitize(s string) string {
-	// TODO
-	return s
+	return strings.Replace(s, "/", "_", -1)
 }
 
 func checkHealth(client *api.Client) error {
