@@ -7,24 +7,28 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
-	"os/exec"
 	"os/signal"
 	"strings"
 	"syscall"
-	"unicode"
+	"time"
 
 	"github.com/hashicorp/vault/api"
 	"github.com/mitchellh/go-homedir"
 	"github.com/urfave/cli"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 	"golang.org/x/crypto/ssh/terminal"
+	"golang.org/x/sync/errgroup"
 )
+
+var Version string
 
 func main() {
 	app := cli.NewApp()
 	app.Name = "vault-exec"
 	app.Usage = "fetch secrets from vault and inject them as environment variables"
 	app.UsageText = "vault-exec [options] cmd-to-execute"
-	app.Version = "0.1"
+	app.Version = Version
 	app.Flags = []cli.Flag{
 		cli.StringFlag{
 			Name:   "address,vault-addr",
@@ -93,11 +97,31 @@ func main() {
 			Usage: "comma separated list of environment variable keys to forward from parent environment",
 			Value: "*",
 		},
+		cli.StringFlag{
+			Name:  "loglevel",
+			Usage: "logging level",
+			Value: "info",
+		},
 	}
 	app.Action = func(c *cli.Context) error {
-		secrets := c.GlobalStringSlice("secret")
+		zcfg := zap.NewProductionConfig()
+		//zcfg := zap.NewDevelopmentConfig()
+		loglevel := zapcore.DebugLevel
+		_ = loglevel.Set(c.GlobalString("loglevel"))
+		zcfg.Level.SetLevel(loglevel)
+		zcfg.Sampling = nil
+		l, err := zcfg.Build()
+		if err != nil {
+			return cli.NewExitError(fmt.Sprintf("unable to initialize zap logger: %s", err), 1)
+		}
+		logger := l.Sugar()
+		defer func() {
+			logger.Sync()
+		}()
+
+		keys := c.GlobalStringSlice("secret")
 		authType := strings.ToLower(c.GlobalString("method"))
-		doPrefix := c.GlobalBool("prefix")
+		prefix := c.GlobalBool("prefix")
 		path := strings.TrimSpace(c.GlobalString("path"))
 		if path == "" {
 			path = authType
@@ -106,16 +130,21 @@ func main() {
 		if len(args) == 0 {
 			args = []string{"env"}
 		}
+		env := ForwardEnv(strings.TrimSpace(c.GlobalString("forward")))
+		upcase := c.GlobalBool("upcase")
 		config := api.DefaultConfig()
 		config.Address = c.GlobalString("address")
+		os.Unsetenv("VAULT_ADDR")
 		client, err := api.NewClient(config)
 		if err != nil {
 			return cli.NewExitError(fmt.Sprintf("error creating vault client: %s", err), 1)
 		}
 		switch authType {
 		case "token":
+			logger.Debugw("token auth")
 			tok := strings.TrimSpace(c.GlobalString("token"))
 			if tok == "" {
+				logger.Debugw("token not found on command line or env")
 				tokenPath, err := homedir.Expand("~/.vault-token")
 				if err == nil {
 					infos, err := os.Stat(tokenPath)
@@ -124,17 +153,21 @@ func main() {
 						if err == nil {
 							tok = string(content)
 						}
+					} else {
+						logger.Debugw("unable to read file token")
 					}
+				} else {
+					logger.Debugw("unable to expand ~/.vault-token", "error", err)
 				}
 				if tok == "" {
 					t, err := input("enter token: ", true)
 					if err != nil {
 						return cli.NewExitError(fmt.Sprintf("error reading token: %s", err), 1)
 					}
-					if t == "" {
-						return cli.NewExitError("empty token", 1)
-					}
 					tok = t
+				}
+				if tok == "" {
+					return cli.NewExitError("empty token", 1)
 				}
 			}
 			client.SetToken(tok)
@@ -214,29 +247,6 @@ func main() {
 			return cli.NewExitError(fmt.Sprintf("vault health check error: %s", err), 1)
 		}
 
-		_, err = client.Auth().Token().LookupSelf()
-		if err != nil {
-			return cli.NewExitError(fmt.Sprintf("vault token lookup error: %s", err), 1)
-		}
-
-		//self.TokenIsRenewable()
-
-		results := make(map[string]map[string]string)
-		for _, sec := range secrets {
-			res, err := client.Logical().Read(sec)
-			if err != nil {
-				return cli.NewExitError(fmt.Sprintf("error reading secret from vault: %s", err), 1)
-			}
-			results[sec] = make(map[string]string)
-			for k, v := range res.Data {
-				if s, ok := v.(string); ok {
-					results[sec][k] = s
-				} else {
-					results[sec][k] = fmt.Sprintf("%s", v)
-				}
-			}
-		}
-
 		sigChan := make(chan os.Signal, 1)
 		signal.Notify(sigChan, syscall.SIGTERM, syscall.SIGINT)
 		ctx, cancel := context.WithCancel(context.Background())
@@ -246,70 +256,91 @@ func main() {
 			}
 		}()
 
-		env := make([]string, 0)
-		forward := strings.TrimSpace(c.GlobalString("forward"))
-		if forward == "*" {
-			env = os.Environ()
-		} else if forward != "" {
-			m := make(map[string]bool)
-			for _, k := range strings.FieldsFunc(forward, func(r rune) bool {
-				return r == ',' || unicode.IsSpace(r)
-			}) {
-				m[k] = true
-			}
-			for _, v := range os.Environ() {
-				v = strings.TrimLeft(v, "= ")
-				if v != "" {
-					spl := strings.SplitN(v, "=", 2)
-					if m[spl[0]] {
-						env = append(env, v)
+		results := make(chan map[string]string)
+		go func() {
+			err := getSecrets(ctx, client, prefix, upcase, keys, logger, results)
+			if err != nil && err != context.Canceled {
+				for _, line := range strings.Split(err.Error(), "\n") {
+					line = strings.TrimSpace(line)
+					if line != "" {
+						logger.Errorw("vault error", "error", line)
 					}
 				}
 			}
-		}
-		upcase := c.GlobalBool("upcase")
-		cmd := exec.Command(args[0], args[1:]...)
-		for secretKey, sValues := range results {
-			for k, v := range sValues {
-				if doPrefix {
-					k = secretKey + "_" + k
-				}
-				//fmt.Printf("%s => %s = %s\n", sKey, k, v)
-				k = sanitize(k)
-				if upcase {
-					k = strings.ToUpper(k)
-				}
-				env = append(env, fmt.Sprintf("%s=%s", k, v))
-			}
-		}
-		cmd.Env = env
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		cmd.Stdin = os.Stdin
-		cmd.SysProcAttr = &syscall.SysProcAttr{
-			Setpgid: true,
-			Pgid:    0,
-		}
-		err = cmd.Start()
-		if err != nil {
-			return cli.NewExitError(fmt.Sprintf("failed to start command: %s", err), 1)
-		}
-		go func() {
-			<-ctx.Done()
-			cmd.Process.Signal(syscall.SIGTERM)
+			cancel()
 		}()
-		err = cmd.Wait()
-		if err != nil {
-			if e, ok := err.(*exec.ExitError); ok {
-				if e2, ok := e.Sys().(syscall.WaitStatus); ok {
-					os.Exit(e2.ExitStatus())
+		var cmdCtx context.Context
+		var cmdCancel context.CancelFunc
+		var cmdGroup *errgroup.Group
+		cmdSubCtx := context.Background()
+		for {
+			select {
+			case <-ctx.Done():
+				// global context is done, means that we received a signal to stop from user
+				if cmdCancel != nil {
+					// ask the command to stop
+					cmdCancel()
+					err := cmdGroup.Wait()
+					if err == ErrCmdFinishedNoError {
+						return nil
+					}
+					return cli.NewExitError(err.Error(), 1)
 				}
+				return nil
+			case <-cmdSubCtx.Done():
+				cmdCancel()
+				err := cmdGroup.Wait()
+				if err == ErrCmdFinishedNoError {
+					return nil
+				}
+				if err != ErrForceStop {
+					return cli.NewExitError(err.Error(), 1)
+				}
+
+			case result, ok := <-results:
+				if !ok {
+					// ask the command to stop
+					if cmdCancel != nil {
+						cmdCancel()
+						err := cmdGroup.Wait()
+						if err == ErrCmdFinishedNoError {
+							return nil
+						}
+						return cli.NewExitError(err.Error(), 1)
+					}
+					return nil
+				}
+				// new results from vault
+				if cmdCancel != nil {
+					// ask the command to stop
+					cmdCancel()
+					err := cmdGroup.Wait()
+					if err == ErrCmdFinishedNoError {
+						return nil
+					}
+					if err != ErrForceStop {
+						return cli.NewExitError(err.Error(), 1)
+					}
+				}
+				cmdCtx, cmdCancel = context.WithCancel(ctx)
+				cmdGroup, cmdSubCtx = errgroup.WithContext(cmdCtx)
+				cmdGroup.Go(func() error {
+					return execCmd(cmdCtx, args, result, env, logger)
+				})
 			}
-			return cli.NewExitError(fmt.Sprintf("failed to execute command: %s", err), 1)
+
 		}
-		return nil
+	}
+	cli.OsExiter = func(code int) {
+		os.Stdout.Sync()
+		os.Stderr.Sync()
+		time.Sleep(200 * time.Millisecond)
+		os.Exit(code)
 	}
 	_ = app.Run(os.Args)
+	os.Stdout.Sync()
+	os.Stderr.Sync()
+	time.Sleep(200 * time.Millisecond)
 }
 
 func sanitize(s string) string {
