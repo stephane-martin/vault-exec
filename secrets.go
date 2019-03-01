@@ -117,9 +117,9 @@ func getSecretsHelper(ctx context.Context, g *errgroup.Group, client *api.Client
 					select {
 					case err := <-renewer.DoneCh():
 						if err != nil {
-							logger.Debugw("can't renew secret", "secret", sec, "error", err)
+							return fmt.Errorf("can't renew secret %s: %s", sec, err)
 						}
-						return err
+						return fmt.Errorf("can't renew secret %s", sec)
 					case renewal := <-renewer.RenewCh():
 						logger.Debugw("secret renewed", "secret", sec, "at", renewal.RenewedAt.Format(time.RFC3339), "lease", renewal.Secret.LeaseDuration)
 					}
