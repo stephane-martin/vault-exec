@@ -141,10 +141,10 @@ func main() {
 		}
 		switch authType {
 		case "token":
-			logger.Debugw("token auth")
+			logger.Info("token based authentication")
 			tok := strings.TrimSpace(c.GlobalString("token"))
 			if tok == "" {
-				logger.Debugw("token not found on command line or env")
+				logger.Debug("token not found on command line or env")
 				tokenPath, err := homedir.Expand("~/.vault-token")
 				if err == nil {
 					infos, err := os.Stat(tokenPath)
@@ -152,9 +152,10 @@ func main() {
 						content, err := ioutil.ReadFile(tokenPath)
 						if err == nil {
 							tok = string(content)
+							logger.Infow("using token from file", "file", tokenPath)
 						}
 					} else {
-						logger.Debugw("unable to read file token")
+						logger.Debug("unable to read file token")
 					}
 				} else {
 					logger.Debugw("unable to expand ~/.vault-token", "error", err)
@@ -259,7 +260,9 @@ func main() {
 		results := make(chan map[string]string)
 		go func() {
 			err := getSecrets(ctx, client, prefix, upcase, keys, logger, results)
-			if err != nil && err != context.Canceled {
+			if e, ok := err.(TokenNotRenewedError); ok {
+				logger.Errorw("can't renew token: giving up", "error", e.Err)
+			} else if err != nil && err != context.Canceled {
 				for _, line := range strings.Split(err.Error(), "\n") {
 					line = strings.TrimSpace(line)
 					if line != "" {
@@ -280,11 +283,7 @@ func main() {
 				if cmdCancel != nil {
 					// ask the command to stop
 					cmdCancel()
-					err := cmdGroup.Wait()
-					if err == ErrCmdFinishedNoError {
-						return nil
-					}
-					return cli.NewExitError(err.Error(), 1)
+					_ = cmdGroup.Wait()
 				}
 				return nil
 			case <-cmdSubCtx.Done():
@@ -302,16 +301,12 @@ func main() {
 					// ask the command to stop
 					if cmdCancel != nil {
 						cmdCancel()
-						err := cmdGroup.Wait()
-						if err == ErrCmdFinishedNoError {
-							return nil
-						}
-						return cli.NewExitError(err.Error(), 1)
+						_ = cmdGroup.Wait()
 					}
 					return nil
 				}
-				// new results from vault
 				if cmdCancel != nil {
+					logger.Info("secrets updated from vault: restarting command")
 					// ask the command to stop
 					cmdCancel()
 					err := cmdGroup.Wait()

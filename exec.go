@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"syscall"
 
 	"go.uber.org/zap"
@@ -29,6 +30,7 @@ func execCmd(ctx context.Context, args []string, results map[string]string, genv
 		Setpgid: true,
 		Pgid:    0,
 	}
+	logger.Infow("starting command", "command", strings.Join(args, " "))
 	err := cmd.Start()
 	if err != nil {
 		return fmt.Errorf("failed to start command: %s", err)
@@ -43,15 +45,18 @@ func execCmd(ctx context.Context, args []string, results map[string]string, genv
 	if err != nil {
 		if e, ok := err.(*exec.ExitError); ok {
 			if e2, ok := e.Sys().(syscall.WaitStatus); ok {
-				logger.Debugw("command exit status is non zero", "status", e2.ExitStatus())
+				logger.Infow("command exit status is non zero", "status", e2.ExitStatus(), "error", err)
+			} else {
+				logger.Infow("command returned error", "error", err)
 			}
+		} else {
+			logger.Infow("command returned error", "error", err)
 		}
-		logger.Debugw("command returned error", "error", err)
 		if forceStop {
 			return ErrForceStop
 		}
 		return err
 	}
-	logger.Debugw("command returned without error")
+	logger.Infow("command returned")
 	return ErrCmdFinishedNoError
 }
