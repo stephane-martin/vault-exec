@@ -51,7 +51,7 @@ func getSecrets(ctx context.Context, client *api.Client, prefix bool, upcase boo
 					}
 					return errors.New("can't renew token anymore")
 				case renewal := <-renewer.RenewCh():
-					logger.Debugw("token renewed", "at", renewal.RenewedAt.Format(time.RFC3339))
+					logger.Debugw("token renewed", "at", renewal.RenewedAt.Format(time.RFC3339), "lease", renewal.Secret.LeaseDuration)
 				}
 			}
 		})
@@ -94,12 +94,11 @@ func getSecretsHelper(ctx context.Context, g *errgroup.Group, client *api.Client
 		for k, v := range res.Data {
 			if s, ok := v.(string); ok {
 				fullResults[sec][k] = s
-			} else {
+			} else if v != nil {
 				fullResults[sec][k] = fmt.Sprintf("%s", v)
 			}
 		}
-		renewable, _ := res.TokenIsRenewable()
-		if renewable {
+		if res.Renewable {
 			logger.Debugw("secret is renewable", "secret", sec)
 			renewer, _ := client.NewRenewer(&api.RenewerInput{
 				Secret: res,
@@ -122,7 +121,7 @@ func getSecretsHelper(ctx context.Context, g *errgroup.Group, client *api.Client
 						}
 						return err
 					case renewal := <-renewer.RenewCh():
-						logger.Debugw("secret renewed", "secret", sec, "at", renewal.RenewedAt.Format(time.RFC3339))
+						logger.Debugw("secret renewed", "secret", sec, "at", renewal.RenewedAt.Format(time.RFC3339), "lease", renewal.Secret.LeaseDuration)
 					}
 				}
 			})
@@ -142,7 +141,6 @@ func getSecretsHelper(ctx context.Context, g *errgroup.Group, client *api.Client
 			if prefix {
 				k = secretKey + "_" + k
 			}
-			//fmt.Printf("%s => %s = %s\n", sKey, k, v)
 			k = sanitize(k)
 			if upcase {
 				k = strings.ToUpper(k)
