@@ -1,4 +1,4 @@
-package main
+package lib
 
 import (
 	"context"
@@ -15,7 +15,7 @@ import (
 var ErrForceStop = errors.New("command has been forced to stop")
 var ErrCmdFinishedNoError = errors.New("command has finished without error")
 
-func execCmd(ctx context.Context, args []string, results map[string]string, genv []string, logger *zap.SugaredLogger) error {
+func ExecCmd(ctx context.Context, args []string, results map[string]string, genv []string, logger *zap.SugaredLogger) error {
 	e := make([]string, 0, len(genv))
 	e = append(e, genv...)
 	cmd := exec.Command(args[0], args[1:]...)

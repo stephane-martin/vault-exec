@@ -1,4 +1,4 @@
-package main
+package lib
 
 import (
 	"context"
@@ -35,7 +35,7 @@ func (e ExpiredSecretError) Error() string {
 	return fmt.Sprintf("can't renew secret %s: %s", e.Key, e.Err)
 }
 
-func getSecrets(ctx context.Context, client *api.Client, prefix bool, upcase bool, keys []string, logger *zap.SugaredLogger, results chan map[string]string) (rerr error) {
+func GetSecrets(ctx context.Context, client *api.Client, prefix bool, upcase bool, keys []string, logger *zap.SugaredLogger, results chan map[string]string) (rerr error) {
 	g, lctx := errgroup.WithContext(ctx)
 	defer func() {
 		err := g.Wait()
