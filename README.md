@@ -40,6 +40,23 @@ make release
 For Linux you van just grab the provided binary in the releases section. It is
 compiled statically.
 
-# Examples
+# Usage
 
+see `vault-exec --help`.
+
+Most options can be set through environment variable. In particular:
+- `VAULT_ADDR` can point to the HTTP address of the Vault server
+- `VAULT_TOKEN` can provide the Vault token for token based authentication.
+
+When using token based authentication, if VAULT_TOKEN is not set, and if the token
+is not provided as a command-line option, vault-exec will try to retrieve the token
+from `~/.vault-token`.
+
+# Example
+
+```
+export VAULT_ADDR=http://127.0.0.1:8200
+export VAULT_TOKEN=s.9rYhELGRJzWaCo3m3bV5eWJO
+vault-exec --secret secret/my env
+```
 
