@@ -22,57 +22,57 @@ func main() {
 	app.Version = Version
 	app.Flags = []cli.Flag{
 		cli.StringFlag{
-			Name:   "address,vault-addr",
+			Name:   "address,vault-addr,addr,a",
 			Value:  "http://127.0.0.1:8200",
 			EnvVar: "VAULT_ADDR",
-			Usage:  "The address of the Vault server",
+			Usage:  "Vault address",
 		},
 		cli.StringFlag{
-			Name:   "token",
+			Name:   "token,t",
 			Value:  "",
 			EnvVar: "VAULT_TOKEN",
-			Usage:  "Vault authentication token, when using the token auth method",
+			Usage:  "Vault authentication token (use with the token auth method)",
 		},
 		cli.StringSliceFlag{
-			Name:  "secret",
-			Usage: "path of secret to be read from Vault (multiple times)",
+			Name:  "secret,key,s,k",
+			Usage: "path of a secret to be read from Vault (multiple times)",
 		},
 		cli.StringFlag{
-			Name:   "method",
-			Usage:  "type of authentication",
+			Name:   "method,m",
+			Usage:  "type of authentication [token,userpass,ldap,approle]",
 			Value:  "token",
 			EnvVar: "VAULT_AUTH_METHOD",
 		},
 		cli.StringFlag{
 			Name:   "path",
-			Usage:  "remote path in Vault where the auth method is enabled",
+			Usage:  "vault remote path where the auth method is mounted (optional)",
 			Value:  "",
 			EnvVar: "VAULT_AUTH_PATH",
 		},
 		cli.StringFlag{
-			Name:   "username",
+			Name:   "username,user,U",
 			Usage:  "Vault username or RoleID",
 			Value:  "",
 			EnvVar: "VAULT_USERNAME",
 		},
 		cli.StringFlag{
-			Name:   "password",
+			Name:   "password,pass,P",
 			Usage:  "Vault password or SecretID",
 			Value:  "",
 			EnvVar: "VAULT_PASSWORD",
 		},
 		cli.BoolFlag{
-			Name:   "upcase",
+			Name:   "upcase,up",
 			Usage:  "convert all environment variable keys to uppercase",
 			EnvVar: "UPCASE",
 		},
 		cli.BoolFlag{
-			Name:   "prefix",
-			Usage:  "prefix the environment variable keys with the name of secret",
+			Name:   "prefix,p",
+			Usage:  "prefix the environment variable keys with names of secrets",
 			EnvVar: "PREFIX",
 		},
 		cli.StringFlag{
-			Name:  "forward",
+			Name:  "forward,fwd,f",
 			Usage: "comma separated list of environment variable keys to forward from parent environment",
 			Value: "*",
 		},
@@ -89,9 +89,7 @@ func main() {
 		}
 		defer logger.Sync()
 
-		keys := c.GlobalStringSlice("secret")
 		authType := strings.ToLower(c.GlobalString("method"))
-		prefix := c.GlobalBool("prefix")
 		path := strings.TrimSpace(c.GlobalString("path"))
 		if path == "" {
 			path = authType
@@ -116,6 +114,8 @@ func main() {
 		ctx, cancel := lib.GlobalContext()
 		results := make(chan map[string]string)
 		go func() {
+			prefix := c.GlobalBool("prefix")
+			keys := c.GlobalStringSlice("secret")
 			err := lib.GetSecrets(ctx, client, prefix, upcase, keys, logger, results)
 			if e, ok := err.(lib.TokenNotRenewedError); ok {
 				logger.Errorw("can't renew token: giving up", "error", e.Err)
