@@ -26,10 +26,10 @@ func ExecCmd(ctx context.Context, args []string, results map[string]string, genv
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Setpgid: true,
-		Pgid:    0,
-	}
+	//cmd.SysProcAttr = &syscall.SysProcAttr{
+	//	Setpgid: true,
+	//	Pgid:    0,
+	//}
 	logger.Infow("starting command", "command", strings.Join(args, " "))
 	err := cmd.Start()
 	if err != nil {
