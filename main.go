@@ -12,6 +12,7 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+// Version stores the current version of vault-exec. It as populated by Makefile.
 var Version string
 
 func main() {
@@ -71,6 +72,11 @@ func main() {
 			Usage:  "prefix the environment variable keys with names of secrets",
 			EnvVar: "PREFIX",
 		},
+		cli.BoolFlag{
+			Name:   "once",
+			Usage:  "don't try to renew token and secrets, run the command only once",
+			EnvVar: "ONCE",
+		},
 		cli.StringFlag{
 			Name:  "forward,fwd,f",
 			Usage: "comma separated list of environment variable keys to forward from parent environment",
@@ -87,12 +93,13 @@ func main() {
 		if err != nil {
 			return cli.NewExitError(err.Error(), 1)
 		}
-		defer logger.Sync()
-
+		defer func() {
+			_ = logger.Sync()
+		}()
 		authType := strings.ToLower(c.GlobalString("method"))
-		path := strings.TrimSpace(c.GlobalString("path"))
-		if path == "" {
-			path = authType
+		authPath := strings.TrimSpace(c.GlobalString("path"))
+		if authPath == "" {
+			authPath = authType
 		}
 		args := c.Args()
 		if len(args) == 0 {
@@ -100,9 +107,17 @@ func main() {
 		}
 		env := lib.ForwardEnv(strings.TrimSpace(c.GlobalString("forward")))
 		upcase := c.GlobalBool("upcase")
-		os.Unsetenv("VAULT_ADDR")
+		username := c.GlobalString("username")
+		password := c.GlobalString("password")
+		vaultAddress := c.GlobalString("address")
+		vaultToken := c.GlobalString("token")
+		prefix := c.GlobalBool("prefix")
+		once := c.GlobalBool("once")
+		keys := c.GlobalStringSlice("secret")
 
-		client, err := lib.Auth(authType, c.GlobalString("address"), path, c.GlobalString("token"), c.GlobalString("username"), c.GlobalString("password"), logger)
+		_ = os.Unsetenv("VAULT_ADDR")
+
+		client, err := lib.Auth(authType, vaultAddress, authPath, vaultToken, username, password, logger)
 		if err != nil {
 			return cli.NewExitError(fmt.Sprintf("auth failed: %s", err), 1)
 		}
@@ -114,9 +129,7 @@ func main() {
 		ctx, cancel := lib.GlobalContext()
 		results := make(chan map[string]string)
 		go func() {
-			prefix := c.GlobalBool("prefix")
-			keys := c.GlobalStringSlice("secret")
-			err := lib.GetSecrets(ctx, client, prefix, upcase, keys, logger, results)
+			err := lib.GetSecrets(ctx, client, prefix, upcase, once, keys, logger, results)
 			if e, ok := err.(lib.TokenNotRenewedError); ok {
 				logger.Errorw("can't renew token: giving up", "error", e.Err)
 			} else if err != nil && err != context.Canceled {
@@ -152,16 +165,7 @@ func main() {
 				if err != lib.ErrForceStop {
 					return cli.NewExitError(err.Error(), 1)
 				}
-
-			case result, ok := <-results:
-				if !ok {
-					// ask the command to stop
-					if cmdCancel != nil {
-						cmdCancel()
-						_ = cmdGroup.Wait()
-					}
-					return nil
-				}
+			case result := <-results:
 				if cmdCancel != nil {
 					logger.Info("secrets updated from vault: restarting command")
 					// ask the command to stop
@@ -184,13 +188,13 @@ func main() {
 		}
 	}
 	cli.OsExiter = func(code int) {
-		os.Stdout.Sync()
-		os.Stderr.Sync()
+		_ = os.Stdout.Sync()
+		_ = os.Stderr.Sync()
 		time.Sleep(200 * time.Millisecond)
 		os.Exit(code)
 	}
 	_ = app.Run(os.Args)
-	os.Stdout.Sync()
-	os.Stderr.Sync()
+	_ = os.Stdout.Sync()
+	_ = os.Stderr.Sync()
 	time.Sleep(200 * time.Millisecond)
 }
