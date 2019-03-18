@@ -97,6 +97,9 @@ func getSecretsHelper(ctx context.Context, g *errgroup.Group, clt *api.Client, p
 		if err != nil {
 			return nil, fmt.Errorf("error reading secret from vault: %s", err)
 		}
+		if secret == nil {
+			continue
+		}
 		l.Debugw("secret read vault vault", "key", secretKey)
 		fullResults[secretKey] = make(map[string]string)
 		for k, v := range secret.Data {
