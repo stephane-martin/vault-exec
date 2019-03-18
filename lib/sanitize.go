@@ -2,8 +2,11 @@ package lib
 
 import "strings"
 
+var illegals = []string{"/", "=", "'", "-", " ", `"`}
+
 func Sanitize(s string) string {
-	s = strings.Replace(s, "/", "_", -1)
-	s = strings.Replace(s, "=", "_", -1)
+	for _, illegal := range illegals {
+		s = strings.Replace(s, illegal, "_", -1)
+	}
 	return s
 }
