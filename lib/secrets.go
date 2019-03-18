@@ -70,7 +70,7 @@ func GetSecrets(ctx context.Context, clt *api.Client, prefix, up, once bool, key
 			l.Info("token is not renewable")
 		}
 	}
-	previousResult := make(map[string]string)
+	var previousResult map[string]string
 	for {
 		subg, llctx := errgroup.WithContext(lctx)
 		result, err := getSecretsHelper(llctx, subg, clt, prefix, up, once, keys, l)
