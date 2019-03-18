@@ -91,6 +91,12 @@ func GetSecrets(ctx context.Context, clt *api.Client, prefix, up, once bool, key
 
 func getSecretsHelper(ctx context.Context, g *errgroup.Group, clt *api.Client, prefix bool, up, once bool, keys []string, l *zap.SugaredLogger) (map[string]string, error) {
 	fullResults := make(map[string]map[string]string)
+	wait := func() {
+		g.Go(func() error {
+			<-ctx.Done()
+			return ctx.Err()
+		})
+	}
 	for _, k := range keys {
 		secretKey := k
 		secret, err := clt.Logical().Read(secretKey)
@@ -98,6 +104,7 @@ func getSecretsHelper(ctx context.Context, g *errgroup.Group, clt *api.Client, p
 			return nil, fmt.Errorf("error reading secret from vault: %s", err)
 		}
 		if secret == nil {
+			wait()
 			continue
 		}
 		l.Debugw("secret read vault vault", "key", secretKey)
@@ -110,19 +117,15 @@ func getSecretsHelper(ctx context.Context, g *errgroup.Group, clt *api.Client, p
 			}
 		}
 		if once {
-			g.Go(func() error {
-				<-ctx.Done()
-				return ctx.Err()
-			})
-		} else if secret.Renewable {
+			wait()
+			continue
+		}
+		if secret.Renewable {
 			l.Infow("secret is renewable", "secret", secretKey)
 			renewSecret(ctx, g, secret, secretKey, clt, l)
 		} else {
 			l.Infow("secret is not renewable", "secret", secretKey)
-			g.Go(func() error {
-				<-ctx.Done()
-				return ctx.Err()
-			})
+			wait()
 		}
 	}
 
