@@ -2,6 +2,8 @@ package lib
 
 import "strings"
 
-func sanitize(s string) string {
-	return strings.Replace(s, "/", "_", -1)
+func Sanitize(s string) string {
+	s = strings.Replace(s, "/", "_", -1)
+	s = strings.Replace(s, "=", "_", -1)
+	return s
 }

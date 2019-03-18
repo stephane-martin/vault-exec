@@ -149,7 +149,7 @@ func getSecretsHelper(ctx context.Context, g *errgroup.Group, clt *api.Client, p
 			if prefix {
 				k = secretKey + "_" + k
 			}
-			k = sanitize(k)
+			k = Sanitize(k)
 			if up {
 				k = strings.ToUpper(k)
 			}
