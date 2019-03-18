@@ -35,6 +35,19 @@ func (e ExpiredSecretError) Error() string {
 	return fmt.Sprintf("can't renew secret %s: %s", e.Key, e.Err)
 }
 
+func equalsMap(m1, m2 map[string]string) bool {
+	if len(m1) != len(m2) {
+		return false
+	}
+	if m1 == nil && m2 != nil {
+		return false
+	}
+	if m1 != nil && m2 == nil {
+		return false
+	}
+	return reflect.DeepEqual(m1, m2)
+}
+
 func GetSecrets(ctx context.Context, clt *api.Client, prefix, up, once bool, keys []string, l *zap.SugaredLogger, results chan map[string]string) (e error) {
 	g, lctx := errgroup.WithContext(ctx)
 	defer func() {
@@ -64,7 +77,7 @@ func GetSecrets(ctx context.Context, clt *api.Client, prefix, up, once bool, key
 		if err != nil {
 			return err
 		}
-		if !reflect.DeepEqual(result, previousResult) {
+		if !equalsMap(result, previousResult) {
 			previousResult = result
 			select {
 			case results <- result:
