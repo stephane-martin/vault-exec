@@ -20,7 +20,7 @@ func Auth(authType, address, path, tok, username, password string, logger *zap.S
 	}
 	switch authType {
 	case "token":
-		logger.Info("token based authentication")
+		logger.Debug("token based authentication")
 		if tok == "" {
 			logger.Debug("token not found on command line or env")
 			tokenPath, err := homedir.Expand("~/.vault-token")
@@ -30,7 +30,7 @@ func Auth(authType, address, path, tok, username, password string, logger *zap.S
 					content, err := ioutil.ReadFile(tokenPath)
 					if err == nil {
 						tok = string(content)
-						logger.Infow("using token from file", "file", tokenPath)
+						logger.Debugw("using token from file", "file", tokenPath)
 					}
 				} else {
 					logger.Debug("unable to read file token")
