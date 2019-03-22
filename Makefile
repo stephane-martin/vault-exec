@@ -7,7 +7,7 @@ SOURCES = $(shell find . -type f -name '*.go' -not -path "./vendor/*")
 
 BINARY=vault-exec
 FULL=github.com/stephane-martin/vault-exec
-VERSION=0.1.8
+VERSION=0.2.1
 LDFLAGS=-ldflags '-X main.Version=${VERSION}'
 LDFLAGS_RELEASE=-ldflags '-w -s -X main.Version=${VERSION}'
 
