@@ -117,12 +117,14 @@ func main() {
 
 		_ = os.Unsetenv("VAULT_ADDR")
 
-		client, err := lib.Auth(authType, vaultAddress, authPath, vaultToken, username, password, logger)
+		// TODO: real context
+		client, err := lib.Auth(context.Background(), authType, vaultAddress, authPath, vaultToken, username, password, logger)
 		if err != nil {
 			return cli.NewExitError(fmt.Sprintf("auth failed: %s", err), 1)
 		}
 
-		err = lib.CheckHealth(client)
+		// TODO: real context
+		err = lib.CheckHealth(context.Background(), client)
 		if err != nil {
 			return cli.NewExitError(fmt.Sprintf("vault health check error: %s", err), 1)
 		}
